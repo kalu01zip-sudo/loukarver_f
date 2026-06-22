@@ -1,0 +1,36 @@
+import React from 'react';
+import { StatusBar } from 'expo-status-bar';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { useFonts } from 'expo-font';
+import { ActivityIndicator, View } from 'react-native';
+import RootNavigator from './src/navigation/RootNavigator';
+import { Colors } from './src/constants/colors';
+
+export default function App() {
+  const [fontsLoaded] = useFonts({
+    'Fraunces-Light': require('./assets/fonts/Fraunces_72pt-Light.ttf'),
+    'Fraunces-Regular': require('./assets/fonts/Fraunces_72pt-Regular.ttf'),
+    'InstrumentSerif-Regular': require('./assets/fonts/InstrumentSerif-Regular.ttf'),
+    'InstrumentSerif-Italic': require('./assets/fonts/InstrumentSerif-Italic.ttf'),
+    'JetBrainsMono-Regular': require('./assets/fonts/ttf/JetBrainsMono-Regular.ttf'),
+  });
+
+  if (!fontsLoaded) {
+    return (
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: Colors.bone }}>
+        <ActivityIndicator color={Colors.accent} />
+      </View>
+    );
+  }
+
+  return (
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <SafeAreaProvider>
+        <StatusBar style="dark" backgroundColor={Colors.bone} />
+        <RootNavigator />
+      </SafeAreaProvider>
+    </GestureHandlerRootView>
+  );
+}
+

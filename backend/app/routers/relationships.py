@@ -1,0 +1,178 @@
+import os
+import uuid
+import shutil
+from fastapi import APIRouter, HTTPException, Depends, status, UploadFile, File
+from fastapi.responses import FileResponse
+from app.schemas.relationships import RelationshipCreate, RelationshipResponse, AlignRequest, AlignResponse
+from app.services.relationships import relationship_service
+from app.routers.auth import get_current_user
+
+router = APIRouter(prefix="/users", tags=["Users"])
+
+@router.get("", response_model=RelationshipResponse, status_code=status.HTTP_200_OK, response_model_exclude_none=True)
+async def get_user_profile(current_user: dict = Depends(get_current_user)):
+    """
+    Retrieves the relationship profile details of the authenticated user.
+    """
+    try:
+        data = await relationship_service.get_relationship_profile(current_user["id"])
+        return RelationshipResponse(
+            success=True,
+            message="Relationship details retrieved successfully!",
+            data=data
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"An error occurred retrieving relationship data: {str(e)}"
+        )
+
+@router.get("/partner", response_model=RelationshipResponse, status_code=status.HTTP_200_OK, response_model_exclude_none=True)
+async def get_partner_profile(current_user: dict = Depends(get_current_user)):
+    """
+    Retrieves the relationship profile details of the aligned partner.
+    """
+    try:
+        data = await relationship_service.get_partner_details(current_user["id"])
+        return RelationshipResponse(
+            success=True,
+            message="Partner details retrieved successfully!",
+            data=data
+        )
+    except ValueError as ve:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(ve)
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"An error occurred retrieving partner data: {str(e)}"
+        )
+
+@router.post("/create", response_model=RelationshipResponse, status_code=status.HTTP_201_CREATED, response_model_exclude_none=True)
+async def create_relationship(submission: RelationshipCreate, current_user: dict = Depends(get_current_user)):
+    """
+    Saves or updates the relationship profile details of the authenticated user.
+    
+    Accepts:
+    - name: string
+    - City Name (or city_name): string
+    - relationship start date (or relationship_start_date) in format mm.dd,yyyy or mm.dd.yyyy
+    - is logn distance relation (or is_long_distance) [true/false]
+    """
+    try:
+        saved_data = await relationship_service.update_relationship_profile(current_user["id"], submission)
+        return RelationshipResponse(
+            success=True,
+            message="Relationship details saved successfully!",
+            data=saved_data
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"An error occurred saving relationship data: {str(e)}"
+        )
+
+@router.post("/aligned", response_model=AlignResponse, status_code=status.HTTP_200_OK, response_model_exclude_none=True)
+async def align_users(payload: AlignRequest, current_user: dict = Depends(get_current_user)):
+    """
+    Connects the authenticated user with another user using the partner's secret key.
+    
+    After connection:
+    - Both users will have is_aligned set to true.
+    - Each user will have the partner's information stored in their database record.
+    """
+    try:
+        updated_user = await relationship_service.align_users(current_user["id"], payload.secret_key)
+        return AlignResponse(
+            success=True,
+            message="Users successfully connected and aligned!",
+            data=updated_user
+        )
+    except ValueError as ve:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(ve)
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"An error occurred connecting users: {str(e)}"
+        )
+
+@router.post("/break-alignment", response_model=AlignResponse, status_code=status.HTTP_200_OK, response_model_exclude_none=True)
+async def break_alignment(current_user: dict = Depends(get_current_user)):
+    """
+    Breaks the connection between the authenticated user and their partner.
+    """
+    try:
+        updated_user = await relationship_service.break_alignment(current_user["id"])
+        return AlignResponse(
+            success=True,
+            message="Relationship alignment broken successfully.",
+            data=updated_user
+        )
+    except ValueError as ve:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(ve)
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"An error occurred breaking alignment: {str(e)}"
+        )
+
+@router.post("/photo", status_code=status.HTTP_200_OK)
+async def upload_photo(file: UploadFile = File(...), current_user: dict = Depends(get_current_user)):
+    """Uploads a profile photo for the authenticated user."""
+    try:
+        os.makedirs("uploads/profiles", exist_ok=True)
+        ext = os.path.splitext(file.filename)[1]
+        if not ext:
+            ext = ".jpg"
+        filename = f"{uuid.uuid4().hex}{ext}"
+        file_path = os.path.join("uploads", "profiles", filename)
+        
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+            
+        updated = await relationship_service.update_profile_photo(current_user["id"], file_path)
+        return {"success": True, "message": "Photo uploaded successfully", "data": updated}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to upload photo: {str(e)}")
+
+@router.get("/photo/{user_id}")
+async def get_photo(user_id: str, current_user: dict = Depends(get_current_user)):
+    """Retrieves the profile photo if the requester is the owner or their aligned partner."""
+    try:
+        if current_user["id"] != user_id:
+            # Check if partner
+            partner_info = current_user.get("partner")
+            if not partner_info or partner_info.get("user_id") != user_id:
+                raise HTTPException(status_code=403, detail="Not authorized to view this photo.")
+                
+        file_path = await relationship_service.get_profile_photo_path(user_id)
+        if not file_path or not os.path.exists(file_path):
+            raise HTTPException(status_code=404, detail="Photo not found.")
+            
+        return FileResponse(file_path)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve photo: {str(e)}")
+
+@router.delete("/photo", status_code=status.HTTP_200_OK)
+async def delete_photo(current_user: dict = Depends(get_current_user)):
+    """Deletes the current user's profile photo."""
+    try:
+        file_path = await relationship_service.get_profile_photo_path(current_user["id"])
+        if file_path and os.path.exists(file_path):
+            os.remove(file_path)
+            
+        updated = await relationship_service.update_profile_photo(current_user["id"], None)
+        return {"success": True, "message": "Photo deleted successfully", "data": updated}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to delete photo: {str(e)}")
+
